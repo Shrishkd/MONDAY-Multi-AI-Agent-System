@@ -1,0 +1,22 @@
+# Which model each agent uses. Models are tried in order; the first that answers wins,
+# and every draft records the model that actually produced it.
+#
+# Local models run on this machine (7.4 GB RAM -> keep them <= ~4B params).
+# ":cloud" models run on Ollama's servers through the same local Ollama daemon.
+
+ollama_host: http://localhost:11434
+
+agents:
+  # Extraction / classification / scoring: small local models are good enough.
+  job_matcher:    [llama3.2:3b, phi4-mini]
+  tracker:        [llama3.2:3b, phi4-mini]
+
+  # Writing agents: quality matters, a bad draft costs a real relationship.
+  # No silent fallback to a 3B model here - better to fail loudly.
+  resume_tailor:  [gpt-oss:120b-cloud, kimi-k3:cloud]
+  outreach:       [gpt-oss:120b-cloud, kimi-k3:cloud]
+  interview_prep: [gpt-oss:120b-cloud, kimi-k3:cloud]
+
+paths:
+  experience_bank: data/experience_bank.yaml
+  database: data/monday.db

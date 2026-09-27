@@ -1,0 +1,68 @@
+# MONDAY Experience Bank - the single source of truth about you.
+#
+# Rules that keep the agents honest:
+#   * Only write things that are TRUE. Agents rephrase and select; they never invent.
+#   * One fact = one accomplishment. Give each a unique, stable `id`.
+#   * Put real numbers in `metrics`. If you don't have a number, leave it out.
+#   * `skills` on a fact are what the Matcher and ATS check look for.
+#
+# `monday init` copies this file to data/experience_bank.yaml (git-ignored).
+# Replace everything below with your own experience.
+
+profile:
+  name: Alex Rivera
+  email: alex.rivera@example.com
+  location: Bengaluru, India
+  headline: Backend engineer - Python, distributed systems
+  links:
+    - https://github.com/example
+    - https://linkedin.com/in/example
+
+skills:
+  languages: [Python, SQL, TypeScript]
+  backend: [FastAPI, PostgreSQL, Redis, Celery]
+  cloud: [AWS, Docker, Terraform]
+  ai: [LLM agents, RAG, Ollama]
+
+roles:
+  - company: Example Corp
+    title: Software Engineer
+    location: Bengaluru
+    start: 2023-07
+    end: present
+    facts:
+      - id: excorp-latency
+        text: Cut checkout API latency by moving hot reads to a Redis cache with write-through invalidation
+        skills: [Python, Redis, FastAPI]
+        metrics: ["p95 latency 800ms -> 120ms"]
+      - id: excorp-etl
+        text: Rebuilt the nightly ETL as idempotent Celery tasks so failed runs could be retried safely
+        skills: [Python, Celery, PostgreSQL]
+        metrics: ["failed-run recovery 3h manual -> automatic"]
+
+projects:
+  - name: MONDAY
+    url: https://github.com/example/monday
+    facts:
+      - id: monday-agents
+        text: Built a draft-only multi-agent job search system with human approval on every output
+        skills: [Python, LLM agents, Ollama, SQLite]
+
+education:
+  - school: Example Institute of Technology
+    degree: B.Tech, Computer Science
+    start: 2019
+    end: 2023
+
+certifications: []
+
+# STAR stories for interview prep. `fact_ids` must reference facts above.
+stories:
+  - id: story-latency
+    title: Fixing a slow checkout under deadline
+    situation: Checkout p95 latency hit 800ms before a sale event.
+    task: Bring it under 200ms without a risky rewrite.
+    action: Profiled the endpoint, found repeated catalog reads, added a Redis write-through cache.
+    result: p95 dropped to 120ms and held through the sale.
+    skills: [Redis, Performance]
+    fact_ids: [excorp-latency]
