@@ -1,22 +1,30 @@
 # Which model each agent uses. Models are tried in order; the first that answers wins,
 # and every draft records the model that actually produced it.
 #
-# Local models run on this machine (7.4 GB RAM -> keep them <= ~4B params).
+# Local models: only Llama 3.2 (3B), Phi-3 (3.8B) and Llama 3 (8B).
+# Llama 3 8B is last in line - on 7.4 GB RAM it is slow and memory-hungry.
 # ":cloud" models run on Ollama's servers through the same local Ollama daemon.
 
 ollama_host: http://localhost:11434
 
 agents:
   # Extraction / classification / scoring: small local models are good enough.
-  job_matcher:    [llama3.2:3b, phi4-mini]
-  tracker:        [llama3.2:3b, phi4-mini]
+  job_matcher:    [llama3.2:3b, phi3, llama3]
+  tracker:        [llama3.2:3b, phi3, llama3]
 
   # Writing agents: quality matters, a bad draft costs a real relationship.
   # No silent fallback to a 3B model here - better to fail loudly.
-  resume_tailor:  [gpt-oss:120b-cloud, kimi-k3:cloud]
-  outreach:       [gpt-oss:120b-cloud, kimi-k3:cloud]
-  interview_prep: [gpt-oss:120b-cloud, kimi-k3:cloud]
+  # gpt-oss is the only cloud family on the free tier (GLM / Kimi return HTTP 402).
+  resume_tailor:  [gpt-oss:120b-cloud, gpt-oss:20b-cloud]
+  resume_import:  [gpt-oss:120b-cloud, gpt-oss:20b-cloud]   # resume upload -> Experience Bank
+  outreach:       [gpt-oss:120b-cloud, gpt-oss:20b-cloud]
+  interview_prep: [gpt-oss:120b-cloud, gpt-oss:20b-cloud]
 
 paths:
   experience_bank: data/experience_bank.yaml
   database: data/monday.db
+  resume_template: data/resume/base.tex   # your LaTeX resume; tailored copies keep its layout
+  output: data/output                     # tailored .tex / .pdf per application
+
+# Full path to pdflatex.exe, or leave empty to find it on PATH / in the default MiKTeX folders.
+pdflatex:

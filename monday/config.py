@@ -14,6 +14,9 @@ class Config:
     agents: dict[str, list[str]] = field(default_factory=dict)
     experience_bank: Path = PROJECT_ROOT / "data" / "experience_bank.yaml"
     database: Path = PROJECT_ROOT / "data" / "monday.db"
+    resume_template: Path = PROJECT_ROOT / "data" / "resume" / "base.tex"
+    output_dir: Path = PROJECT_ROOT / "data" / "output"
+    pdflatex: str | None = None  # None -> find it automatically
 
     def models_for(self, agent: str) -> list[str]:
         models = self.agents.get(agent)
@@ -38,4 +41,7 @@ def load_config(path: Path | str | None = None) -> Config:
         agents={name: list(models) for name, models in (raw.get("agents") or {}).items()},
         experience_bank=_resolve(paths.get("experience_bank"), Config.experience_bank),
         database=_resolve(paths.get("database"), Config.database),
+        resume_template=_resolve(paths.get("resume_template"), Config.resume_template),
+        output_dir=_resolve(paths.get("output"), Config.output_dir),
+        pdflatex=raw.get("pdflatex"),
     )

@@ -42,7 +42,10 @@ roles:
 
 projects:
   - name: MONDAY
-    url: https://github.com/example/monday
+    dates: 2026
+    links:
+      GitHub: https://github.com/example/monday
+    tech_stack: [Python, Ollama, SQLite, Streamlit]
     facts:
       - id: monday-agents
         text: Built a draft-only multi-agent job search system with human approval on every output
@@ -54,7 +57,14 @@ education:
     start: 2019
     end: 2023
 
-certifications: []
+certifications:
+  - name: AWS Certified Solutions Architect - Associate
+    issuer: AWS
+    year: 2026
+    url: https://example.com/cert
+
+achievements:
+  - Semi-finalist, Example Hackathon 2025
 
 # STAR stories for interview prep. `fact_ids` must reference facts above.
 stories:

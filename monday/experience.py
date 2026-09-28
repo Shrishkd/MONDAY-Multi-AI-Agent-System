@@ -33,8 +33,17 @@ class Role(BaseModel):
 
 class Project(BaseModel):
     name: str
-    url: str | None = None
+    dates: DateText | None = None
+    links: dict[str, str] = Field(default={}, description='Label -> URL, e.g. {"GitHub": "https://..."}.')
+    tech_stack: list[str] = []
     facts: list[Fact] = []
+
+
+class Certification(BaseModel):
+    name: str
+    issuer: str
+    year: DateText | None = None
+    url: str | None = None
 
 
 class Education(BaseModel):
@@ -74,7 +83,8 @@ class ExperienceBank(BaseModel):
     roles: list[Role] = []
     projects: list[Project] = []
     education: list[Education] = []
-    certifications: list[str] = []
+    certifications: list[Certification] = []
+    achievements: list[str] = []
     stories: list[Story] = []
 
     def facts(self) -> list[Fact]:
@@ -86,6 +96,7 @@ class ExperienceBank(BaseModel):
     def all_skills(self) -> set[str]:
         skills = {s for group in self.skills.values() for s in group}
         skills |= {s for f in self.facts() for s in f.skills}
+        skills |= {s for p in self.projects for s in p.tech_stack}
         return skills
 
     @model_validator(mode="after")

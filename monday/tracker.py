@@ -132,6 +132,13 @@ class Tracker:
             self._log(app_id, "draft", f"{kind} #{draft_id} by {agent} ({model})")
         return draft_id
 
+    def latest_draft(self, app_id: int, kind: str, include_rejected: bool = False) -> sqlite3.Row | None:
+        exclude = "" if include_rejected else " AND status != 'rejected'"
+        return self.conn.execute(
+            f"SELECT * FROM drafts WHERE application_id = ? AND kind = ?{exclude} ORDER BY id DESC LIMIT 1",
+            (app_id, kind),
+        ).fetchone()
+
     def pending_drafts(self) -> list[sqlite3.Row]:
         return self.conn.execute(
             "SELECT * FROM drafts WHERE status = 'pending' ORDER BY created_at, id"

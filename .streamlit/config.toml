@@ -1,0 +1,8 @@
+# MONDAY holds personal data (resume facts, contacts, application history).
+# Serve it to this machine only - Streamlit's default listens on the whole network.
+[server]
+address = "localhost"
+headless = true
+
+[browser]
+gatherUsageStats = false

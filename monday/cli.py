@@ -5,9 +5,12 @@ from pathlib import Path
 
 import ollama
 
+from monday import pipeline
 from monday.config import PROJECT_ROOT, load_config
 from monday.db import APPLICATION_STATUSES, connect
 from monday.experience import load_bank
+from monday.latex import LatexError, find_pdflatex
+from monday.llm import LLMError
 from monday.tracker import Tracker
 
 EXAMPLE_BANK = PROJECT_ROOT / "examples" / "experience_bank.example.yaml"
@@ -46,6 +49,16 @@ def cmd_doctor(args, config):
     except Exception as exc:
         ok = False
         print(f"[x] Experience Bank: {exc}")
+    try:
+        print(f"[ok] pdflatex: {find_pdflatex(config.pdflatex)}")
+    except LatexError as exc:
+        ok = False
+        print(f"[x] {exc}")
+    if config.resume_template.exists():
+        print(f"[ok] Resume template: {config.resume_template}")
+    else:
+        ok = False
+        print(f"[x] Resume template missing: {config.resume_template}")
     return 0 if ok else 1
 
 
@@ -84,6 +97,55 @@ def cmd_status(args, tracker):
     print(f"#{args.id} -> {args.status}")
 
 
+def cmd_match(args, tracker, config):
+    app = tracker.get_application(args.id)
+    print(f"Matching #{app['id']} {app['title']} @ {app['company']} ...")
+    report, model, _ = pipeline.match(tracker, config, app["id"])
+
+    print(f"\nScore {report.score:.0f}/100 -> {report.recommendation.upper()}   (extracted by {model})")
+    for label, matches in (("Must have", report.must_have), ("Nice to have", report.nice_to_have)):
+        if matches:
+            print(f"\n{label}:")
+            for m in matches:
+                proof = ", ".join(m.evidence[:3]) if m.matched else "GAP"
+                print(f"  [{'x' if m.matched else ' '}] {m.skill:28} {proof}")
+    for flag in report.flags:
+        print(f"! {flag}")
+    if report.dropped_skills:
+        print(f"  ignored: {', '.join(report.dropped_skills)}")
+    print(f"\nDecide: monday status {app['id']} preparing   |   monday status {app['id']} skipped")
+
+
+def cmd_tailor(args, tracker, config):
+    app = tracker.get_application(args.id)
+    print(f"Tailoring resume for #{app['id']} {app['title']} @ {app['company']} (takes a minute) ...")
+    draft_id, c, model = pipeline.tailor(tracker, config, app["id"])
+
+    print(f"\nDraft #{draft_id} written by {model}")
+    print(f"\nSummary:{'  (original kept - rewrite failed checks)' if c['summary_fallback'] else ''}\n  {c['summary']}")
+    for section in c["sections"]:
+        print(f"\n{section['label']}")
+        for b in section["bullets"]:
+            tag = "  [original]" if b["fallback"] else ""
+            print(f"  - {b['text']}{tag}\n      cites: {', '.join(b['fact_ids'])}")
+    cov = c["coverage"]
+    print(f"\nATS keyword coverage: {cov['before']:.0f}% -> {cov['after']:.0f}%")
+    if cov["hidden"]:
+        print(f"  you have but the resume doesn't show: {', '.join(cov['hidden'])}")
+    if cov["gaps"]:
+        print(f"  real gaps, correctly not claimed: {', '.join(cov['gaps'])}")
+    if c["violations"]:
+        print(f"\nRejected by the fabrication check ({len(c['violations'])}):")
+        for v in c["violations"]:
+            print(f"  x {v}")
+    if c["pdf"]:
+        warn = "  <- more than one page!" if c["pages"] and c["pages"] > 1 else ""
+        print(f"\nPDF: {c['pdf']} ({c['pages']} page{'s' if c['pages'] != 1 else ''}){warn}")
+    else:
+        print(f"\nPDF not built: {c['compile_error']}\n.tex written to {c['tex']}")
+    print(f"\nReview and approve it in the app:  streamlit run app.py")
+
+
 def cmd_funnel(args, tracker):
     print("Reached stage:")
     for stage, n in tracker.funnel().items():
@@ -120,11 +182,21 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("status", choices=APPLICATION_STATUSES)
     st.add_argument("--note")
 
+    m = sub.add_parser("match", help="score a saved JD against your Experience Bank")
+    m.add_argument("id", type=int)
+
+    t = sub.add_parser("tailor", help="draft a tailored resume (.tex + .pdf) for an application")
+    t.add_argument("id", type=int)
+
     sub.add_parser("funnel", help="how many applications reached each stage")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Windows consoles default to cp1252, which can't print what models write (e.g. U+202F).
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     args = build_parser().parse_args(argv)
     config = load_config(args.config)
 
@@ -135,12 +207,17 @@ def main(argv: list[str] | None = None) -> int:
 
     conn = connect(config.database)
     try:
-        handler = {
-            "add-job": cmd_add_job, "list": cmd_list, "show": cmd_show,
-            "status": cmd_status, "funnel": cmd_funnel,
-        }[args.command]
-        handler(args, Tracker(conn))
-    except (KeyError, ValueError) as exc:
+        if args.command == "match":
+            cmd_match(args, Tracker(conn), config)
+        elif args.command == "tailor":
+            cmd_tailor(args, Tracker(conn), config)
+        else:
+            handler = {
+                "add-job": cmd_add_job, "list": cmd_list, "show": cmd_show,
+                "status": cmd_status, "funnel": cmd_funnel,
+            }[args.command]
+            handler(args, Tracker(conn))
+    except (KeyError, ValueError, FileNotFoundError, LLMError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     finally:
