@@ -88,6 +88,34 @@ CREATE TABLE IF NOT EXISTS events (
     created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Web research per company, cached so every role at the same company reuses it.
+CREATE TABLE IF NOT EXISTS company_research (
+    id          INTEGER PRIMARY KEY,
+    company_id  INTEGER NOT NULL REFERENCES companies(id),
+    sources     TEXT NOT NULL,   -- JSON list of sources: title, url, content
+    created_at  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Mock interview practice: one session per sitting, one row per answered question.
+CREATE TABLE IF NOT EXISTS practice_sessions (
+    id              INTEGER PRIMARY KEY,
+    application_id  INTEGER NOT NULL REFERENCES applications(id),
+    questions       TEXT NOT NULL,   -- JSON list of questions planned for this session
+    started_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at     TEXT
+);
+
+CREATE TABLE IF NOT EXISTS practice_answers (
+    id           INTEGER PRIMARY KEY,
+    session_id   INTEGER NOT NULL REFERENCES practice_sessions(id),
+    question     TEXT NOT NULL,      -- JSON: the question as asked (incl. category)
+    answer       TEXT NOT NULL,
+    feedback     TEXT NOT NULL,      -- JSON feedback + check results
+    score        REAL,               -- mean of the criterion scores, 1-5
+    is_follow_up INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_application ON events(application_id);
 CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status);
 """

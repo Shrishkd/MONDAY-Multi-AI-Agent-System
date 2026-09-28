@@ -60,7 +60,14 @@ def run_agent(label: str, fn):
         try:
             return fn()
         except LLMError as exc:
-            st.error(f"{label} failed - no model could answer.\n\n{exc}")
+            if exc.network:
+                st.error("Couldn't reach Ollama's cloud (ollama.com) - your internet connection or DNS "
+                         "dropped. MONDAY already retried a few times. Your work is saved; wait a moment and "
+                         "try again. If this keeps happening, see *Network troubleshooting* in the README.")
+                with st.expander("Technical details"):
+                    st.code(str(exc), language=None)
+            else:
+                st.error(f"{label} failed - no model could answer.\n\n{exc}")
         except Exception as exc:  # surface anything else instead of a blank page
             st.exception(exc)
 
@@ -209,6 +216,90 @@ def review_outreach(draft, content: dict):
     st.caption("Approving doesn't send anything. You'll send it yourself from the application page.")
 
 
+PREP_GROUPS = {"technical": "Technical", "resume": "Your resume", "behavioral": "Behavioral",
+               "gap": "Gaps", "company": "Why this company"}
+BRIEF_TITLES = {"overview": "Overview", "products": "Products", "tech_and_engineering": "Tech & engineering",
+                "recent_news": "Recent news", "interview_process": "Interview process",
+                "culture_and_values": "Culture & values"}
+
+
+def render_prep(content: dict, app, key: str):
+    """A prep sheet: brief with sources, questions by group, STAR outlines, questions to ask."""
+    src = {s["id"]: s for s in content["sources"]}
+    st.download_button("Download as Markdown", pipeline.prep_markdown(app, content),
+                       file_name=f"prep_{app['company']}_{app['title']}.md".replace(" ", "_"), key=f"md{key}")
+    tabs = st.tabs(["Company brief", *PREP_GROUPS.values(), "STAR outlines", "Ask them"])
+
+    with tabs[0]:
+        if not content["sources"]:
+            st.warning("No web research was available - this sheet is built from the JD and your facts only.")
+        st.caption(f"{len(content['sources'])} sources · researched {content['researched_at'] or 'never'}"
+                   " · every point links to where it came from")
+        for section, title in BRIEF_TITLES.items():
+            points = content["brief"].get(section) or []
+            if points:
+                st.markdown(f"**{title}**")
+                for p in points:
+                    refs = " ".join(f"[[{i}]]({src[i]['url']})" for i in p["source_ids"] if i in src)
+                    st.markdown(f"- {p['text']} {refs}")
+        with st.expander("Sources"):
+            for s in content["sources"]:
+                st.markdown(f"{s['id']}. [{s['title']}]({s['url']})")
+        if content["research_notes"] or content["dropped"]:
+            with st.expander("Filtered out or dropped by checks"):
+                for n in content["research_notes"] + content["dropped"]:
+                    st.write(f"- {n}")
+
+    for tab, (cat, title) in zip(tabs[1:6], PREP_GROUPS.items()):
+        with tab:
+            qs = [q for q in content["questions"] if q["category"] == cat]
+            if cat == "gap":
+                st.caption("Questions about skills you don't have. Answer honestly: adjacent experience + how you'd ramp up.")
+            if not qs:
+                st.write("None.")
+            for q in qs:
+                st.markdown(f"**{q['question']}**")
+                st.caption(q["why_they_ask"])
+                for t in q["talking_points"]:
+                    st.markdown(f"- {t}")
+                if q["fact_ids"]:
+                    st.caption(f"from your facts: {', '.join(q['fact_ids'])}")
+
+    with tabs[6]:
+        st.info("Drafts built from your facts. The situation and task are the model's framing - rewrite every "
+                "part in your own words and answer the fill-in questions, then save it as a story you can reuse.")
+        for i, s in enumerate(content["star_outlines"]):
+            with st.form(f"star{key}-{i}"):
+                st.markdown(f"**{s['title']}** · from {', '.join(s['fact_ids'])}")
+                for f in s["fill_in"]:
+                    st.markdown(f"- [ ] {f}")
+                parts = {part: st.text_area(part.title(), s[part], height=70, key=f"{part}{key}-{i}")
+                         for part in ("situation", "task", "action", "result")}
+                if st.form_submit_button("Save as story in my Experience Bank"):
+                    if all(parts[p] == s[p] for p in parts):
+                        st.error("Rewrite it in your own words first - saving the model's draft as-is isn't a story.")
+                    else:
+                        backup = pipeline.save_story(config, {"title": s["title"], "fact_ids": s["fact_ids"],
+                                                              "skills": [], **parts})
+                        st.success(f"Saved. Previous bank backed up to {backup.name}.")
+
+    with tabs[7]:
+        for q in content["questions_to_ask"]:
+            st.markdown(f"- {q}")
+
+
+def review_prep(draft, content: dict):
+    app = tracker.get_application(draft["application_id"])
+    render_prep(content, app, f"r{draft['id']}")
+    b1, b2 = st.columns(2)
+    if b1.button("Approve", key=f"ok{draft['id']}", type="primary"):
+        tracker.review_draft(draft["id"], approve=True)
+        st.rerun()
+    if b2.button("Reject", key=f"no{draft['id']}"):
+        tracker.review_draft(draft["id"], approve=False)
+        st.rerun()
+
+
 def page_review():
     st.title("Review queue")
     st.caption("Nothing leaves MONDAY without your approval - and MONDAY never sends anything itself.")
@@ -227,6 +318,8 @@ def page_review():
                 review_resume(draft, content)
             elif draft["kind"] in OUTREACH_KINDS:
                 review_outreach(draft, content)
+            elif draft["kind"] == "interview_prep":
+                review_prep(draft, content)
             else:
                 st.json(content)
 
@@ -369,7 +462,22 @@ def application_detail(app_id: int):
     if c2.button("Tailor resume", key=f"t{app_id}", type="primary"):
         if run_agent("Resume Tailor is drafting (about a minute)", lambda: pipeline.tailor(tracker, config, app_id)):
             st.success("Draft ready - see the Review queue.")
-    c3.caption("Outreach: see Contacts below. Interview Prep: coming next.")
+    refresh = st.checkbox("Refresh company research (otherwise reuse what was found for this company)",
+                          key=f"refresh{app_id}")
+    if c3.button("Prepare for interview", key=f"p{app_id}"):
+        if run_agent("Researching the company and writing your prep sheet (1-2 minutes)",
+                     lambda: pipeline.interview_prep(tracker, config, app_id, refresh_research=refresh)):
+            st.success("Prep sheet ready - see the Review queue.")
+
+    with st.form(f"site{app_id}"):
+        w1, w2 = st.columns([3, 1])
+        website = w1.text_input("Company website (fetched directly as a trusted research source)",
+                                app["company_website"] or "", placeholder="https://www.example.com")
+        cached = tracker.latest_research(app["company_id"])
+        w2.caption(f"Research cached: {len(cached[0])} sources, {cached[1]} UTC" if cached else "No research yet")
+        if st.form_submit_button("Save website"):
+            tracker.set_company_website(app["company_id"], website.strip() or None)
+            st.rerun()
 
     with st.form(f"status{app_id}"):
         s1, s2 = st.columns([1, 2])
@@ -385,6 +493,11 @@ def application_detail(app_id: int):
             st.rerun()
 
     contacts_section(app_id, app)
+
+    approved_prep = tracker.latest_draft(app_id, "interview_prep")
+    if approved_prep and approved_prep["status"] == "approved":
+        with st.expander("Interview prep sheet", expanded=False):
+            render_prep(json.loads(approved_prep["content"]), app, f"a{approved_prep['id']}")
 
     with st.expander("Job description"):
         st.text(app["description"])
@@ -502,6 +615,161 @@ def page_resume():
                 st.success(f"Applied. Previous version backed up to `{backup}`.")
 
 
+# --- mock interview -----------------------------------------------------------------
+
+CRITERIA_HELP = {"relevance": "answers the question asked", "structure": "easy to follow; STAR for behavioral",
+                 "specificity": "concrete details and real numbers", "clarity": "concise, no rambling"}
+
+
+def mock_setup():
+    apps = [a for a in tracker.list_applications() if pipeline.latest_prep(tracker, a["id"])]
+    if not apps:
+        st.info("Mock interviews use an application's interview prep sheet. Open an application and click "
+                "**Prepare for interview** first.")
+        return
+    labels = {a["id"]: f"#{a['id']} {a['title']} @ {a['company']}" for a in apps}
+    with st.form("mock_setup"):
+        app_id = st.selectbox("Practice for", list(labels), format_func=labels.get)
+        n = st.slider("Questions", 3, 10, 5)
+        cats = st.multiselect("Question types", list(PREP_GROUPS), default=list(PREP_GROUPS),
+                              format_func=PREP_GROUPS.get)
+        if st.form_submit_button("Start mock interview", type="primary"):
+            try:
+                session_id, questions = pipeline.start_mock(tracker, app_id, n, cats or list(PREP_GROUPS))
+            except ValueError as exc:
+                st.error(str(exc))
+                return
+            st.session_state["mock"] = {"session_id": session_id, "app_id": app_id, "questions": questions,
+                                        "i": 0, "phase": "answer", "question": questions[0],
+                                        "follow_up": False, "feedback": None, "answer": ""}
+            st.rerun()
+
+
+def show_feedback(m: dict):
+    fb = m["feedback"]
+    with st.expander("Your answer"):
+        st.write(m["answer"])
+    cols = st.columns(len(fb["scores"]) or 1)
+    for col, c in zip(cols, fb["scores"]):
+        col.metric(c["name"].title(), f"{c['score']}/5", help=CRITERIA_HELP.get(c["name"]))
+    for c in fb["scores"]:
+        st.caption(f"**{c['name'].title()}:** {c['comment']}")
+    for note in fb["checks"]:
+        st.warning(note)
+    s1, s2 = st.columns(2)
+    with s1:
+        st.markdown("**What worked**")
+        for s in fb["strengths"]:
+            st.markdown(f"- {s}")
+    with s2:
+        st.markdown("**Improve**")
+        for s in fb["improvements"]:
+            st.markdown(f"- {s}")
+    if fb["stronger_answer"]:
+        with st.expander("A stronger version of your answer (only your words + your facts)"):
+            st.write(fb["stronger_answer"])
+            if fb["fact_ids"]:
+                st.caption(f"uses: {', '.join(fb['fact_ids'])}")
+    elif fb["stronger_answer_withheld"]:
+        st.caption("The suggested rewrite was withheld - it added things you didn't say: "
+                   + "; ".join(fb["stronger_answer_withheld"]))
+    if not m["follow_up"] and m["question"].get("talking_points"):
+        with st.expander("What your prep sheet suggested"):
+            for t in m["question"]["talking_points"]:
+                st.markdown(f"- {t}")
+
+
+def mock_summary(session_id: int):
+    answers = tracker.practice_answers(session_id)
+    st.subheader("Session summary")
+    if not answers:
+        st.write("No answers recorded.")
+        return
+    per: dict[str, list[int]] = {}
+    for a in answers:
+        for c in json.loads(a["feedback"])["scores"]:
+            per.setdefault(c["name"], []).append(c["score"])
+    cols = st.columns(len(per) or 1)
+    for col, (name, vals) in zip(cols, per.items()):
+        col.metric(name.title(), f"{sum(vals) / len(vals):.1f}/5")
+    if per:
+        weakest = min(per, key=lambda k: sum(per[k]) / len(per[k]))
+        st.info(f"Weakest area this session: **{weakest}** - {CRITERIA_HELP.get(weakest, '')}.")
+    for a in answers:
+        q = json.loads(a["question"])
+        tag = " (follow-up)" if a["is_follow_up"] else ""
+        st.markdown(f"- **{a['score']:.1f}/5**{tag} {q['question']}" if a["score"] is not None
+                    else f"- {q['question']}")
+
+
+def page_mock():
+    st.title("Mock interview")
+    st.caption("Answer as you would out loud. You get scores, direct feedback, a follow-up question, and a "
+               "stronger version of your answer built only from what you said and your Experience Bank.")
+    m = st.session_state.get("mock")
+    if not m:
+        mock_setup()
+        return
+
+    if m["phase"] == "done":
+        mock_summary(m["session_id"])
+        if st.button("Start a new session", type="primary"):
+            st.session_state.pop("mock")
+            st.rerun()
+        return
+
+    total = len(m["questions"])
+    st.progress(m["i"] / total, text=f"Question {m['i'] + 1} of {total}" + (" · follow-up" if m["follow_up"] else ""))
+    q = m["question"]
+    st.caption(PREP_GROUPS.get(q.get("category"), "Follow-up") if not m["follow_up"] else "Follow-up")
+    st.markdown(f"### {q['question']}")
+
+    if m["phase"] == "answer":
+        answer = st.text_area("Your answer", key=f"ans{m['session_id']}-{m['i']}-{m['follow_up']}", height=220)
+        st.caption(f"{len(answer.split())} words · ~{len(answer.split()) / 130 * 60:.0f}s spoken")
+        a1, a2, a3 = st.columns(3)
+        if a3.button("End session now", key="end_answer"):
+            tracker.finish_practice(m["session_id"])
+            m["phase"] = "done"
+            st.rerun()
+        if a1.button("Submit answer", type="primary"):
+            result = run_agent("Interviewer is reviewing your answer", lambda: pipeline.answer_mock(
+                tracker, config, m["session_id"], m["app_id"], q, answer, is_follow_up=m["follow_up"]))
+            if result:
+                m.update(feedback=result[0], answer=answer, phase="feedback")
+                st.rerun()
+        if a2.button("Skip this question"):
+            _next_question(m)
+            st.rerun()
+    else:
+        show_feedback(m)
+        st.divider()
+        follow = m["feedback"]["follow_up_question"]
+        if follow and not m["follow_up"]:
+            st.markdown(f"**The interviewer follows up:** {follow}")
+        b1, b2, b3 = st.columns(3)
+        if follow and not m["follow_up"] and b1.button("Answer the follow-up"):
+            m.update(question={"question": follow, "category": "follow_up"}, follow_up=True, phase="answer")
+            st.rerun()
+        last = m["i"] + 1 >= total
+        if b2.button("Finish" if last else "Next question", type="primary"):
+            _next_question(m)
+            st.rerun()
+        if b3.button("End session now", key="end_feedback"):
+            tracker.finish_practice(m["session_id"])
+            m["phase"] = "done"
+            st.rerun()
+
+
+def _next_question(m: dict):
+    m["i"] += 1
+    if m["i"] >= len(m["questions"]):
+        tracker.finish_practice(m["session_id"])
+        m["phase"] = "done"
+    else:
+        m.update(question=m["questions"][m["i"]], follow_up=False, phase="answer", feedback=None, answer="")
+
+
 # --- dashboard ----------------------------------------------------------------------
 
 def page_dashboard():
@@ -525,6 +793,20 @@ def page_dashboard():
     if reviewed:
         st.caption(f"{100 * stats['approved_as_is'] / reviewed:.0f}% of reviewed drafts needed no edits.")
 
+    st.subheader("Interview practice")
+    practice = tracker.practice_stats()
+    if not practice["answers"]:
+        st.write("No mock interviews yet.")
+    else:
+        cols = st.columns(2 + len(practice["criteria"]))
+        cols[0].metric("Sessions", practice["sessions"])
+        cols[1].metric("Answers", practice["answers"])
+        for col, (name, avg) in zip(cols[2:], practice["criteria"].items()):
+            col.metric(name.title(), f"{avg:.1f}/5")
+        trend = practice["session_averages"]
+        if len(trend) > 1:
+            st.caption("Average score per session: " + " → ".join(f"{s:.1f}" for s in trend))
+
     st.subheader("Due follow-ups")
     due = tracker.due_actions(date.today())
     if not due:
@@ -537,6 +819,7 @@ pending = len(tracker.pending_drafts())
 nav = st.navigation([
     st.Page(page_review, title=f"Review queue ({pending})", icon="✅", default=True),
     st.Page(page_applications, title="Applications", icon="🗂️"),
+    st.Page(page_mock, title="Mock interview", icon="🎤"),
     st.Page(page_resume, title="My resume", icon="📄"),
     st.Page(page_dashboard, title="Dashboard", icon="📊"),
 ])

@@ -9,8 +9,8 @@ ollama_host: http://localhost:11434
 
 agents:
   # Extraction / classification / scoring: small local models are good enough.
+  # (The Tracker has no entry: it is plain code, never a model.)
   job_matcher:    [llama3.2:3b, phi3, llama3]
-  tracker:        [llama3.2:3b, phi3, llama3]
 
   # Writing agents: quality matters, a bad draft costs a real relationship.
   # No silent fallback to a 3B model here - better to fail loudly.
@@ -19,6 +19,7 @@ agents:
   resume_import:  [gpt-oss:120b-cloud, gpt-oss:20b-cloud]   # resume upload -> Experience Bank
   outreach:       [gpt-oss:120b-cloud, gpt-oss:20b-cloud]
   interview_prep: [gpt-oss:120b-cloud, gpt-oss:20b-cloud]
+  mock_interview: [gpt-oss:120b-cloud, gpt-oss:20b-cloud]   # feedback on your practice answers
 
 paths:
   experience_bank: data/experience_bank.yaml

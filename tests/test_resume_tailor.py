@@ -37,6 +37,8 @@ TERMS = claimable_terms(BANK, REPORT)
 
 def test_numbers_normalise_thousands_separators():
     assert numbers("3,500 pages, 0.083 to 0.917, 7/7") == {"3500", "0.083", "0.917", "7"}
+    assert numbers("3 800+ properties, 1 000 users") == {"3800", "1000"}
+    assert numbers("in 2026 2 teams") == {"2026", "2"}   # not a thousands group
 
 
 def test_faithful_rewrite_passes():

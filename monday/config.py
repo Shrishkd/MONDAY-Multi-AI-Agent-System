@@ -19,6 +19,7 @@ class Config:
     pdflatex: str | None = None  # None -> find it automatically
     linkedin_note_chars: int = 200   # free LinkedIn accounts: 200, Premium: 300
     follow_up_days: int = 5          # after you mark a message sent
+    ollama_api_key: str | None = field(default=None, repr=False)   # web search only; from .env
 
     def models_for(self, agent: str) -> list[str]:
         models = self.agents.get(agent)
@@ -34,10 +35,25 @@ def _resolve(path: str | None, default: Path) -> Path:
     return p if p.is_absolute() else PROJECT_ROOT / p
 
 
+def read_env_file(path: Path = PROJECT_ROOT / ".env") -> dict[str, str]:
+    """KEY=VALUE lines from the git-ignored .env file. Values are NOT put into os.environ,
+    so secrets only reach the code that asks for them."""
+    if not path.exists():
+        return {}
+    values = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
 def load_config(path: Path | str | None = None) -> Config:
     path = Path(path or os.environ.get("MONDAY_CONFIG") or DEFAULT_CONFIG)
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     paths = raw.get("paths", {})
+    secrets = read_env_file()
     return Config(
         ollama_host=raw.get("ollama_host", Config.ollama_host),
         agents={name: list(models) for name, models in (raw.get("agents") or {}).items()},
@@ -48,4 +64,5 @@ def load_config(path: Path | str | None = None) -> Config:
         pdflatex=raw.get("pdflatex"),
         linkedin_note_chars=int((raw.get("outreach") or {}).get("linkedin_note_chars", Config.linkedin_note_chars)),
         follow_up_days=int((raw.get("outreach") or {}).get("follow_up_days", Config.follow_up_days)),
+        ollama_api_key=os.environ.get("OLLAMA_API_KEY") or secrets.get("OLLAMA_API_KEY"),
     )

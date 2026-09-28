@@ -31,7 +31,7 @@ class FakeClient:
 
 def make_llm(replies):
     config = Config(agents={"matcher": list(replies)})
-    return LLM(config, client=FakeClient(replies))
+    return LLM(config, client=FakeClient(replies), sleep=lambda s: None)
 
 
 def test_returns_typed_output_and_model():
@@ -43,13 +43,38 @@ def test_returns_typed_output_and_model():
 
 def test_falls_back_on_error_and_on_bad_output():
     llm = make_llm({
-        "down": ollama.ResponseError("rate limited", 429),
+        "no-credits": ollama.ResponseError("add usage credits", 402),   # permanent: no retry
         "garbled": '{"skills": "not a list"}',
         "good": '{"skills": ["SQL"]}',
     })
     result = llm.structured("matcher", "sys", "jd", Skills)
     assert result.model == "good"
-    assert llm.client.calls == ["down", "garbled", "garbled", "good"]  # bad JSON gets one retry
+    assert llm.client.calls == ["no-credits", "garbled", "garbled", "good"]  # bad JSON gets one retry
+
+
+DNS_FAIL = ollama.ResponseError('Post "https://ollama.com:443/api/chat": dial tcp: lookup ollama.com: '
+                                'no such host', 502)
+
+
+def test_network_blip_is_retried_on_the_same_model():
+    llm = make_llm({"cloud": [DNS_FAIL, DNS_FAIL, '{"skills": ["Go"]}']})
+    result = llm.structured("matcher", "sys", "jd", Skills)
+    assert result.model == "cloud" and llm.client.calls == ["cloud"] * 3
+
+
+def test_persistent_network_failure_is_reported_as_network():
+    llm = make_llm({"a": [DNS_FAIL] * 3, "b": [ConnectionError("offline")] * 3})
+    with pytest.raises(LLMError) as err:
+        llm.structured("matcher", "sys", "jd", Skills)
+    assert err.value.network
+    assert llm.client.calls == ["a"] * 3 + ["b"] * 3
+
+
+def test_mixed_failures_are_not_called_network():
+    llm = make_llm({"a": [DNS_FAIL] * 3, "b": ollama.ResponseError("model not found", 404)})
+    with pytest.raises(LLMError) as err:
+        llm.structured("matcher", "sys", "jd", Skills)
+    assert not err.value.network
 
 
 def test_json_is_extracted_from_prose_and_fences():

@@ -1,6 +1,9 @@
 # Personal data: resume facts, contacts, application history. Never commit.
 data/
 
+# Secrets (API keys). Never commit.
+.env
+
 .venv/
 __pycache__/
 *.egg-info/

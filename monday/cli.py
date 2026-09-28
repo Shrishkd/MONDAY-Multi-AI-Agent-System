@@ -153,6 +153,23 @@ def cmd_add_contact(args, tracker):
     print(f"Added contact #{contact_id}: {args.name} @ {app['company']}")
 
 
+def cmd_prep(args, tracker, config):
+    app = tracker.get_application(args.id)
+    print(f"Preparing for #{app['id']} {app['title']} @ {app['company']} (1-2 minutes) ...")
+    draft_id, c, model = pipeline.interview_prep(tracker, config, app["id"], refresh_research=args.refresh)
+    out = config.output_dir / f"app-{app['id']}" / "interview_prep.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(pipeline.prep_markdown(app, c), encoding="utf-8")
+    brief_points = sum(len(v) for v in c["brief"].values())
+    print(f"\nDraft #{draft_id} by {model}: {len(c['sources'])} sources, {brief_points} brief points, "
+          f"{len(c['questions'])} questions, {len(c['star_outlines'])} STAR outlines")
+    for note in c["research_notes"][:5]:
+        print(f"  note: {note}")
+    if c["dropped"]:
+        print(f"  {len(c['dropped'])} item(s) dropped by the checks")
+    print(f"\nPrep sheet: {out}\nReview and approve it in the app.")
+
+
 def cmd_outreach(args, tracker, config):
     app = tracker.get_application(args.id)
     contact = tracker.get_contact(args.contact)
@@ -226,6 +243,10 @@ def build_parser() -> argparse.ArgumentParser:
     o.add_argument("--kind", default="cold_email",
                    choices=["cold_email", "linkedin_note", "linkedin_message", "follow_up"])
 
+    pr = sub.add_parser("prep", help="interview prep sheet: company research, likely questions, STAR outlines")
+    pr.add_argument("id", type=int)
+    pr.add_argument("--refresh", action="store_true", help="redo the web research instead of reusing it")
+
     sub.add_parser("funnel", help="how many applications reached each stage")
     return p
 
@@ -251,13 +272,21 @@ def main(argv: list[str] | None = None) -> int:
             cmd_tailor(args, Tracker(conn), config)
         elif args.command == "outreach":
             cmd_outreach(args, Tracker(conn), config)
+        elif args.command == "prep":
+            cmd_prep(args, Tracker(conn), config)
         else:
             handler = {
                 "add-job": cmd_add_job, "list": cmd_list, "show": cmd_show,
                 "status": cmd_status, "funnel": cmd_funnel, "add-contact": cmd_add_contact,
             }[args.command]
             handler(args, Tracker(conn))
-    except (KeyError, ValueError, FileNotFoundError, LLMError) as exc:
+    except LLMError as exc:
+        if exc.network:
+            print("error: couldn't reach Ollama's cloud (ollama.com) - your internet connection or DNS "
+                  "dropped. Try again in a moment.", file=sys.stderr)
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except (KeyError, ValueError, FileNotFoundError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     finally:

@@ -93,8 +93,12 @@ class TailorResult:
 _NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
 
 
+# Models write "3 800" (narrow no-break space) where a source wrote "3,800".
+_THOUSANDS_SPACE = re.compile(r"(?<=\d)[   ](?=\d{3}(?!\d))")
+
+
 def numbers(text: str) -> set[str]:
-    return {n.replace(",", "") for n in _NUMBER.findall(text)}
+    return {n.replace(",", "") for n in _NUMBER.findall(_THOUSANDS_SPACE.sub("", text))}
 
 
 def _fact_text(facts: list[Fact], with_tags: bool = True) -> str:

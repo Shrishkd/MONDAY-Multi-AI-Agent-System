@@ -45,7 +45,8 @@ class Tracker:
 
     def get_application(self, app_id: int) -> sqlite3.Row:
         row = self.conn.execute(
-            """SELECT a.*, j.title, j.url, j.location, j.description, c.name AS company
+            """SELECT a.*, j.title, j.url, j.location, j.description, c.name AS company,
+                      c.id AS company_id, c.website AS company_website
                FROM applications a
                JOIN jobs j ON j.id = a.job_id
                JOIN companies c ON c.id = j.company_id
@@ -149,6 +150,81 @@ class Tracker:
                 f"UPDATE contacts SET {', '.join(f'{k} = ?' for k in updates)} WHERE id = ?",
                 (*updates.values(), contact_id),
             )
+
+    # --- company research -------------------------------------------------
+
+    def set_company_website(self, company_id: int, website: str | None) -> None:
+        with self.conn:
+            self.conn.execute("UPDATE companies SET website = ? WHERE id = ?", (website, company_id))
+
+    def save_research(self, company_id: int, sources: list[dict]) -> None:
+        with self.conn:
+            self.conn.execute("INSERT INTO company_research (company_id, sources) VALUES (?, ?)",
+                              (company_id, json.dumps(sources)))
+
+    def latest_research(self, company_id: int) -> tuple[list[dict], str] | None:
+        """(sources, created_at) of the newest research for a company, if any."""
+        row = self.conn.execute(
+            "SELECT sources, created_at FROM company_research WHERE company_id = ? ORDER BY id DESC LIMIT 1",
+            (company_id,),
+        ).fetchone()
+        return (json.loads(row["sources"]), row["created_at"]) if row else None
+
+    # --- mock interview practice ------------------------------------------
+
+    def start_practice(self, app_id: int, questions: list[dict]) -> int:
+        with self.conn:
+            session_id = self.conn.execute(
+                "INSERT INTO practice_sessions (application_id, questions) VALUES (?, ?)",
+                (app_id, json.dumps(questions)),
+            ).lastrowid
+            self._log(app_id, "practice", f"mock interview #{session_id} started ({len(questions)} questions)")
+        return session_id
+
+    def add_practice_answer(self, session_id: int, question: dict, answer: str, feedback: dict,
+                            score: float | None, is_follow_up: bool = False) -> int:
+        with self.conn:
+            return self.conn.execute(
+                "INSERT INTO practice_answers (session_id, question, answer, feedback, score, is_follow_up)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (session_id, json.dumps(question), answer, json.dumps(feedback), score, int(is_follow_up)),
+            ).lastrowid
+
+    def finish_practice(self, session_id: int) -> None:
+        row = self.conn.execute("SELECT application_id FROM practice_sessions WHERE id = ?", (session_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"No practice session {session_id}")
+        answers = self.practice_answers(session_id)
+        scores = [a["score"] for a in answers if a["score"] is not None]
+        with self.conn:
+            self.conn.execute("UPDATE practice_sessions SET finished_at = CURRENT_TIMESTAMP WHERE id = ?", (session_id,))
+            self._log(row["application_id"], "practice",
+                      f"mock interview #{session_id} finished: {len(answers)} answers"
+                      + (f", average {sum(scores) / len(scores):.1f}/5" if scores else ""))
+
+    def practice_answers(self, session_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM practice_answers WHERE session_id = ? ORDER BY id", (session_id,)
+        ).fetchall()
+
+    def practice_stats(self) -> dict:
+        """Totals, average score by criterion, and the score trend across sessions."""
+        rows = self.conn.execute(
+            "SELECT pa.session_id, pa.score, pa.feedback FROM practice_answers pa ORDER BY pa.id"
+        ).fetchall()
+        by_criterion: dict[str, list[int]] = {}
+        by_session: dict[int, list[float]] = {}
+        for r in rows:
+            for c in json.loads(r["feedback"]).get("scores", []):
+                by_criterion.setdefault(c["name"], []).append(c["score"])
+            if r["score"] is not None:
+                by_session.setdefault(r["session_id"], []).append(r["score"])
+        return {
+            "answers": len(rows),
+            "sessions": len(by_session),
+            "criteria": {k: sum(v) / len(v) for k, v in by_criterion.items()},
+            "session_averages": [sum(v) / len(v) for _, v in sorted(by_session.items())],
+        }
 
     # --- drafts: the human approval gate ----------------------------------
 
