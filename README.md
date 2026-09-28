@@ -41,6 +41,7 @@ and it **tracks every application** like a small CRM.
 - [Testing](#testing)
 - [Troubleshooting](#troubleshooting)
 - [Limitations and roadmap](#limitations-and-roadmap)
+- [Related project](#related-project)
 
 ---
 
@@ -599,6 +600,23 @@ agent on real JDs during development.
 - Per-agent quality trends (edit rates over time) on the dashboard
 - Email integration that reads replies to update the status (read-only; still never sends)
 - Evaluation sets for each agent, so model or prompt changes are measured rather than eyeballed
+
+---
+
+## Related project
+
+**[Career Mentor: AI Mock Interview & ATS Resume Platform](https://github.com/Shrishkd/CareerMentorV2)**
+([live demo](https://career-mentor-6ctn.onrender.com)): a project of mine on the same problem from a
+different angle.
+
+- A full-stack web platform (React, TypeScript, Flask) that parses a resume and generates personalized
+  interview questions with a locally hosted Qwen3-4B model via Ollama.
+- Real-time computer-vision proctoring during mock interviews (MediaPipe, OpenCV).
+- A standalone ATS Resume Checker with deterministic scoring, calibrated on 14 real resumes.
+
+Career Mentor is a web platform focused on interview practice and resume checks. MONDAY is a personal,
+local-first system for the whole job search, from scoring a JD to outreach. They share two ideas:
+deterministic scoring instead of model-invented numbers, and local models where they're good enough.
 
 ---
 

@@ -32,6 +32,11 @@ tracker = Tracker(conn)
 
 # --- helpers -------------------------------------------------------------------
 
+def md(text: str) -> str:
+    """Text from models or the web, safe for st.markdown: '$95 million ... $50' is not LaTeX math."""
+    return str(text).replace("$", "\\$")
+
+
 @st.cache_data(show_spinner=False)
 def pdf_page_png(path: str, mtime: float) -> bytes:
     with pymupdf.open(path) as doc:
@@ -130,7 +135,7 @@ def review_resume(draft, content: dict):
         if content["violations"]:
             with st.expander("What the fabrication check rejected"):
                 for v in content["violations"]:
-                    st.write(f"- {v}")
+                    st.write(f"- {md(v)}")
 
         st.markdown("**Edit before approving** - `**bold**` works. Each bullet shows the facts it cites.")
         summary = st.text_area("Summary", content["summary"], key=f"sum{did}", height=110)
@@ -203,7 +208,7 @@ def review_outreach(draft, content: dict):
     if content["contact_details_used"]:
         with st.expander("Details about the contact it used (from your notes)"):
             for d in content["contact_details_used"]:
-                st.write(f"- {d}")
+                st.write(f"- {md(d)}")
 
     b1, b2 = st.columns(2)
     if b1.button("Approve with edits" if edited else "Approve", key=f"ok{did}", type="primary"):
@@ -241,14 +246,14 @@ def render_prep(content: dict, app, key: str):
                 st.markdown(f"**{title}**")
                 for p in points:
                     refs = " ".join(f"[[{i}]]({src[i]['url']})" for i in p["source_ids"] if i in src)
-                    st.markdown(f"- {p['text']} {refs}")
+                    st.markdown(f"- {md(p['text'])} {refs}")
         with st.expander("Sources"):
             for s in content["sources"]:
                 st.markdown(f"{s['id']}. [{s['title']}]({s['url']})")
         if content["research_notes"] or content["dropped"]:
             with st.expander("Filtered out or dropped by checks"):
                 for n in content["research_notes"] + content["dropped"]:
-                    st.write(f"- {n}")
+                    st.write(f"- {md(n)}")
 
     for tab, (cat, title) in zip(tabs[1:6], PREP_GROUPS.items()):
         with tab:
@@ -258,10 +263,10 @@ def render_prep(content: dict, app, key: str):
             if not qs:
                 st.write("None.")
             for q in qs:
-                st.markdown(f"**{q['question']}**")
-                st.caption(q["why_they_ask"])
+                st.markdown(f"**{md(q['question'])}**")
+                st.caption(md(q["why_they_ask"]))
                 for t in q["talking_points"]:
-                    st.markdown(f"- {t}")
+                    st.markdown(f"- {md(t)}")
                 if q["fact_ids"]:
                     st.caption(f"from your facts: {', '.join(q['fact_ids'])}")
 
@@ -272,7 +277,7 @@ def render_prep(content: dict, app, key: str):
             with st.form(f"star{key}-{i}"):
                 st.markdown(f"**{s['title']}** · from {', '.join(s['fact_ids'])}")
                 for f in s["fill_in"]:
-                    st.markdown(f"- [ ] {f}")
+                    st.markdown(f"- [ ] {md(f)}")
                 parts = {part: st.text_area(part.title(), s[part], height=70, key=f"{part}{key}-{i}")
                          for part in ("situation", "task", "action", "result")}
                 if st.form_submit_button("Save as story in my Experience Bank"):
@@ -285,7 +290,7 @@ def render_prep(content: dict, app, key: str):
 
     with tabs[7]:
         for q in content["questions_to_ask"]:
-            st.markdown(f"- {q}")
+            st.markdown(f"- {md(q)}")
 
 
 def review_prep(draft, content: dict):
@@ -590,7 +595,7 @@ def page_resume():
                 if d[kind]:
                     with st.expander(f"{kind.title()} ({len(d[kind])})", expanded=kind != "reworded"):
                         for line in d[kind]:
-                            st.write(f"- {line}")
+                            st.write(f"- {md(line)}")
             for w in state["warnings"]:
                 st.warning(f"Check this - the model may have invented it: {w}")
             edited_yaml = st.text_area("Review and edit before applying (YAML)", state["yaml"], height=420)
@@ -648,7 +653,7 @@ def mock_setup():
 def show_feedback(m: dict):
     fb = m["feedback"]
     with st.expander("Your answer"):
-        st.write(m["answer"])
+        st.write(md(m["answer"]))
     cols = st.columns(len(fb["scores"]) or 1)
     for col, c in zip(cols, fb["scores"]):
         col.metric(c["name"].title(), f"{c['score']}/5", help=CRITERIA_HELP.get(c["name"]))
@@ -660,14 +665,14 @@ def show_feedback(m: dict):
     with s1:
         st.markdown("**What worked**")
         for s in fb["strengths"]:
-            st.markdown(f"- {s}")
+            st.markdown(f"- {md(s)}")
     with s2:
         st.markdown("**Improve**")
         for s in fb["improvements"]:
-            st.markdown(f"- {s}")
+            st.markdown(f"- {md(s)}")
     if fb["stronger_answer"]:
         with st.expander("A stronger version of your answer (only your words + your facts)"):
-            st.write(fb["stronger_answer"])
+            st.write(md(fb["stronger_answer"]))
             if fb["fact_ids"]:
                 st.caption(f"uses: {', '.join(fb['fact_ids'])}")
     elif fb["stronger_answer_withheld"]:
@@ -676,7 +681,7 @@ def show_feedback(m: dict):
     if not m["follow_up"] and m["question"].get("talking_points"):
         with st.expander("What your prep sheet suggested"):
             for t in m["question"]["talking_points"]:
-                st.markdown(f"- {t}")
+                st.markdown(f"- {md(t)}")
 
 
 def mock_summary(session_id: int):
@@ -722,7 +727,7 @@ def page_mock():
     st.progress(m["i"] / total, text=f"Question {m['i'] + 1} of {total}" + (" · follow-up" if m["follow_up"] else ""))
     q = m["question"]
     st.caption(PREP_GROUPS.get(q.get("category"), "Follow-up") if not m["follow_up"] else "Follow-up")
-    st.markdown(f"### {q['question']}")
+    st.markdown(f"### {md(q['question'])}")
 
     if m["phase"] == "answer":
         answer = st.text_area("Your answer", key=f"ans{m['session_id']}-{m['i']}-{m['follow_up']}", height=220)
@@ -746,7 +751,7 @@ def page_mock():
         st.divider()
         follow = m["feedback"]["follow_up_question"]
         if follow and not m["follow_up"]:
-            st.markdown(f"**The interviewer follows up:** {follow}")
+            st.markdown(f"**The interviewer follows up:** {md(follow)}")
         b1, b2, b3 = st.columns(3)
         if follow and not m["follow_up"] and b1.button("Answer the follow-up"):
             m.update(question={"question": follow, "category": "follow_up"}, follow_up=True, phase="answer")
