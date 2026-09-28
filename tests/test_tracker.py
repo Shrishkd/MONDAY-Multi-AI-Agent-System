@@ -67,6 +67,45 @@ def test_draft_review_gate(tracker):
         tracker.review_draft(d1, approve=False)
 
 
+def test_old_database_gets_new_columns(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.execute("CREATE TABLE drafts (id INTEGER PRIMARY KEY, application_id INTEGER, agent TEXT, kind TEXT,"
+                " content TEXT, edited_content TEXT, model TEXT, status TEXT, created_at TEXT, reviewed_at TEXT)")
+    old.close()
+    conn = connect(path)
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(drafts)")}
+    assert {"contact_id", "sent_at"} <= cols
+    conn.close()
+
+
+def test_outreach_draft_sent_by_you_schedules_follow_up(tracker):
+    app = tracker.add_job("Acme", "Eng", "JD")
+    contact = tracker.add_contact("Acme", "Priya Shah", role="EM", notes="met at meetup")
+    assert [c["name"] for c in tracker.contacts_for_application(app)] == ["Priya Shah"]
+
+    d = tracker.add_draft(app, "outreach", "cold_email", {"body": "hi"}, "m", contact_id=contact)
+    with pytest.raises(ValueError, match="only approved"):
+        tracker.mark_sent(d)
+    tracker.review_draft(d, approve=True)
+    tracker.mark_sent(d, follow_up_in_days=5)
+
+    assert tracker.get_draft(d)["sent_at"] is not None
+    assert tracker.get_application(app)["next_action"].startswith("Follow up with Priya Shah")
+    assert tracker.outreach_drafts(app)[0]["contact_name"] == "Priya Shah"
+    with pytest.raises(ValueError, match="already"):
+        tracker.mark_sent(d)
+
+
+def test_update_contact_only_touches_allowed_fields(tracker):
+    tracker.add_job("Acme", "Eng", "JD")
+    c = tracker.add_contact("Acme", "Priya")
+    tracker.update_contact(c, notes="new notes", company_id=999)
+    row = tracker.get_contact(c)
+    assert row["notes"] == "new notes" and row["company"] == "Acme"
+
+
 def test_due_actions(tracker):
     app = tracker.add_job("Acme", "Eng", "JD")
     tracker.set_next_action(app, "follow up with recruiter", date(2026, 10, 1))

@@ -6,7 +6,7 @@ truth for where an application stands. Every change is written to the events tim
 
 import json
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 from monday.db import APPLICATION_STATUSES
 
@@ -121,16 +121,79 @@ class Tracker:
                 (self.company_id(company), name, role, email, linkedin_url, notes),
             ).lastrowid
 
+    def get_contact(self, contact_id: int) -> sqlite3.Row:
+        row = self.conn.execute(
+            "SELECT ct.*, c.name AS company FROM contacts ct JOIN companies c ON c.id = ct.company_id"
+            " WHERE ct.id = ?", (contact_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"No contact with id {contact_id}")
+        return row
+
+    def contacts_for_application(self, app_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            """SELECT ct.* FROM contacts ct
+               JOIN jobs j ON j.company_id = ct.company_id
+               JOIN applications a ON a.job_id = j.id
+               WHERE a.id = ? ORDER BY ct.id""",
+            (app_id,),
+        ).fetchall()
+
+    def update_contact(self, contact_id: int, **fields) -> None:
+        allowed = {"name", "role", "email", "linkedin_url", "notes"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+        with self.conn:
+            self.conn.execute(
+                f"UPDATE contacts SET {', '.join(f'{k} = ?' for k in updates)} WHERE id = ?",
+                (*updates.values(), contact_id),
+            )
+
     # --- drafts: the human approval gate ----------------------------------
 
-    def add_draft(self, app_id: int, agent: str, kind: str, content: dict, model: str) -> int:
+    def add_draft(self, app_id: int, agent: str, kind: str, content: dict, model: str,
+                  contact_id: int | None = None) -> int:
         with self.conn:
             draft_id = self.conn.execute(
-                "INSERT INTO drafts (application_id, agent, kind, content, model) VALUES (?, ?, ?, ?, ?)",
-                (app_id, agent, kind, json.dumps(content), model),
+                "INSERT INTO drafts (application_id, agent, kind, content, model, contact_id)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (app_id, agent, kind, json.dumps(content), model, contact_id),
             ).lastrowid
             self._log(app_id, "draft", f"{kind} #{draft_id} by {agent} ({model})")
         return draft_id
+
+    def get_draft(self, draft_id: int) -> sqlite3.Row:
+        row = self.conn.execute("SELECT * FROM drafts WHERE id = ?", (draft_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"No draft with id {draft_id}")
+        return row
+
+    def outreach_drafts(self, app_id: int) -> list[sqlite3.Row]:
+        """Every outreach draft for an application, with its contact."""
+        return self.conn.execute(
+            """SELECT d.*, ct.name AS contact_name, ct.email AS contact_email,
+                      ct.linkedin_url AS contact_linkedin
+               FROM drafts d JOIN contacts ct ON ct.id = d.contact_id
+               WHERE d.application_id = ? ORDER BY d.id""",
+            (app_id,),
+        ).fetchall()
+
+    def mark_sent(self, draft_id: int, follow_up_in_days: int | None = 5) -> None:
+        """You sent an approved message yourself. Log it and schedule a follow-up."""
+        draft = self.get_draft(draft_id)
+        if draft["status"] != "approved":
+            raise ValueError(f"Draft {draft_id} is {draft['status']} - only approved drafts can be sent")
+        if draft["sent_at"]:
+            raise ValueError(f"Draft {draft_id} was already marked sent")
+        contact = self.get_contact(draft["contact_id"]) if draft["contact_id"] else None
+        who = contact["name"] if contact else "contact"
+        with self.conn:
+            self.conn.execute("UPDATE drafts SET sent_at = CURRENT_TIMESTAMP WHERE id = ?", (draft_id,))
+            self._log(draft["application_id"], "outreach_sent", f"{draft['kind']} #{draft_id} to {who}")
+        if follow_up_in_days:
+            self.set_next_action(draft["application_id"], f"Follow up with {who} ({draft['kind']} #{draft_id})",
+                                 date.today() + timedelta(days=follow_up_in_days))
 
     def latest_draft(self, app_id: int, kind: str, include_rejected: bool = False) -> sqlite3.Row | None:
         exclude = "" if include_rejected else " AND status != 'rejected'"

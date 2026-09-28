@@ -7,6 +7,7 @@ MONDAY never sends anything itself.
 import json
 from datetime import date
 from pathlib import Path
+from urllib.parse import quote
 
 import pymupdf
 import streamlit as st
@@ -167,6 +168,47 @@ def review_resume(draft, content: dict):
             st.rerun()
 
 
+OUTREACH_KINDS = {"cold_email": "Cold email", "linkedin_note": "LinkedIn connection note",
+                  "linkedin_message": "LinkedIn message", "follow_up": "Follow-up email"}
+
+
+def review_outreach(draft, content: dict):
+    did = draft["id"]
+    contact = tracker.get_contact(draft["contact_id"])
+    st.markdown(f"**To:** {contact['name']}" + (f", {contact['role']}" if contact["role"] else "")
+                + (f" · {contact['email']}" if contact["email"] else ""))
+    if content.get("follow_up_without_earlier_message"):
+        st.warning("No approved earlier message to this contact was found - this follow-up has nothing to refer to.")
+    for p in content["problems"]:
+        st.error(f"Failed check (after one retry): {p}")
+
+    subject = st.text_input("Subject", content["subject"], key=f"subj{did}") if content["subject"] else ""
+    body = st.text_area("Message", content["body"], key=f"body{did}", height=260)
+    limit = content["max_chars"]
+    st.caption(f"{len(body)} / {limit} characters" + ("  - over the limit!" if len(body) > limit else "")
+               + f" · cites: {', '.join(content['fact_ids']) or 'nothing'}")
+
+    edited = subject != content["subject"] or body != content["body"]
+    issues = (pipeline.outreach_edit_check(tracker, config, did, subject, body) if edited
+              else content["warnings"])
+    for issue in issues:
+        st.warning(("Your edit: " if edited else "") + issue)
+    if content["contact_details_used"]:
+        with st.expander("Details about the contact it used (from your notes)"):
+            for d in content["contact_details_used"]:
+                st.write(f"- {d}")
+
+    b1, b2 = st.columns(2)
+    if b1.button("Approve with edits" if edited else "Approve", key=f"ok{did}", type="primary"):
+        tracker.review_draft(did, approve=True,
+                             edited_content={**content, "subject": subject, "body": body} if edited else None)
+        st.rerun()
+    if b2.button("Reject", key=f"no{did}"):
+        tracker.review_draft(did, approve=False)
+        st.rerun()
+    st.caption("Approving doesn't send anything. You'll send it yourself from the application page.")
+
+
 def page_review():
     st.title("Review queue")
     st.caption("Nothing leaves MONDAY without your approval - and MONDAY never sends anything itself.")
@@ -183,6 +225,8 @@ def page_review():
                 review_match(draft, content)
             elif draft["kind"] == "resume":
                 review_resume(draft, content)
+            elif draft["kind"] in OUTREACH_KINDS:
+                review_outreach(draft, content)
             else:
                 st.json(content)
 
@@ -235,6 +279,82 @@ def page_applications():
     application_detail(selected)
 
 
+def contacts_section(app_id: int, app):
+    st.markdown("#### Contacts & outreach")
+    st.caption("People at this company. Your notes are the ONLY source of personal details the Outreach "
+               "agent may use - paste their About section, a recent post, how you found them.")
+
+    for contact in tracker.contacts_for_application(app_id):
+        cid = contact["id"]
+        header = contact["name"] + (f" - {contact['role']}" if contact["role"] else "")
+        with st.expander(header):
+            with st.form(f"contact{cid}"):
+                n1, n2 = st.columns(2)
+                role = n1.text_input("Role", contact["role"] or "")
+                email = n2.text_input("Email", contact["email"] or "")
+                linkedin = st.text_input("LinkedIn URL", contact["linkedin_url"] or "")
+                notes = st.text_area("Notes", contact["notes"] or "", height=100)
+                if st.form_submit_button("Save contact"):
+                    tracker.update_contact(cid, role=role or None, email=email or None,
+                                           linkedin_url=linkedin or None, notes=notes or None)
+                    st.rerun()
+            cols = st.columns(len(OUTREACH_KINDS))
+            for col, (kind, label) in zip(cols, OUTREACH_KINDS.items()):
+                if col.button(f"Draft {label.lower()}", key=f"o{cid}{kind}"):
+                    if run_agent(f"Outreach agent is drafting a {label.lower()}",
+                                 lambda k=kind: pipeline.outreach(tracker, config, app_id, cid, k)):
+                        st.success("Draft ready - see the Review queue.")
+
+    with st.form(f"new_contact{app_id}", clear_on_submit=True):
+        st.markdown("**Add a contact**")
+        n1, n2 = st.columns(2)
+        name = n1.text_input("Name")
+        role = n2.text_input("Role", placeholder="Engineering Manager, recruiter, alum ...")
+        e1, e2 = st.columns(2)
+        email = e1.text_input("Email")
+        linkedin = e2.text_input("LinkedIn URL")
+        notes = st.text_area("Notes about them", height=90)
+        if st.form_submit_button("Add contact"):
+            if not name.strip():
+                st.error("Name is required.")
+            else:
+                tracker.add_contact(app["company"], name.strip(), role=role or None, email=email or None,
+                                    linkedin_url=linkedin or None, notes=notes or None)
+                st.rerun()
+
+    drafts = tracker.outreach_drafts(app_id)
+    ready = [d for d in drafts if d["status"] == "approved" and not d["sent_at"]]
+    if ready:
+        st.markdown("**Approved - ready for you to send**")
+    for d in ready:
+        c = json.loads(d["edited_content"] or d["content"])
+        with st.container(border=True):
+            st.markdown(f"{OUTREACH_KINDS[d['kind']]} to **{d['contact_name']}** (draft #{d['id']})")
+            if c.get("subject"):
+                st.code(c["subject"], language=None)
+            st.code(c["body"], language=None, wrap_lines=True)
+            b1, b2, b3 = st.columns(3)
+            if d["kind"] in ("cold_email", "follow_up") and d["contact_email"]:
+                mailto = (f"mailto:{d['contact_email']}?subject={quote(c.get('subject', ''))}"
+                          f"&body={quote(c['body'])}")
+                b1.link_button("Open in my email app", mailto)
+            elif d["contact_linkedin"]:
+                b1.link_button("Open their LinkedIn", d["contact_linkedin"])
+            if b2.button("I sent it", key=f"sent{d['id']}", type="primary"):
+                tracker.mark_sent(d["id"], follow_up_in_days=config.follow_up_days)
+                st.rerun()
+            b3.caption(f"Marking it sent schedules a follow-up in {config.follow_up_days} days.")
+
+    ready_ids = {d["id"] for d in ready}
+    history = [d for d in drafts if d["id"] not in ready_ids]
+    if history:
+        st.dataframe(
+            [{"draft": d["id"], "type": OUTREACH_KINDS.get(d["kind"], d["kind"]), "to": d["contact_name"],
+              "status": d["status"], "sent (UTC)": d["sent_at"] or ""} for d in history],
+            hide_index=True, width="stretch",
+        )
+
+
 def application_detail(app_id: int):
     app = tracker.get_application(app_id)
     st.divider()
@@ -249,7 +369,7 @@ def application_detail(app_id: int):
     if c2.button("Tailor resume", key=f"t{app_id}", type="primary"):
         if run_agent("Resume Tailor is drafting (about a minute)", lambda: pipeline.tailor(tracker, config, app_id)):
             st.success("Draft ready - see the Review queue.")
-    c3.caption("Outreach and Interview Prep agents: coming next.")
+    c3.caption("Outreach: see Contacts below. Interview Prep: coming next.")
 
     with st.form(f"status{app_id}"):
         s1, s2 = st.columns([1, 2])
@@ -263,6 +383,8 @@ def application_detail(app_id: int):
             if next_action != (app["next_action"] or "") or (due and due.isoformat() != app["next_action_due"]):
                 tracker.set_next_action(app_id, next_action, due)
             st.rerun()
+
+    contacts_section(app_id, app)
 
     with st.expander("Job description"):
         st.text(app["description"])

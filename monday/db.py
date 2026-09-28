@@ -73,7 +73,9 @@ CREATE TABLE IF NOT EXISTS drafts (
     status          TEXT NOT NULL DEFAULT 'pending'
                     CHECK (status IN ({_statuses(DRAFT_STATUSES)})),
     created_at      TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    reviewed_at     TEXT
+    reviewed_at     TEXT,
+    contact_id      INTEGER REFERENCES contacts(id),  -- outreach drafts: who it's for
+    sent_at         TEXT             -- set when YOU mark it sent; MONDAY never sends
 );
 
 -- Append-only timeline. Funnel and time-in-stage metrics are computed from it.
@@ -91,6 +93,22 @@ CREATE INDEX IF NOT EXISTS idx_drafts_status ON drafts(status);
 """
 
 
+# Columns added after a table first shipped. CREATE TABLE IF NOT EXISTS never alters an
+# existing table, so older databases get them here.
+MIGRATIONS = {
+    "drafts": {"contact_id": "INTEGER REFERENCES contacts(id)", "sent_at": "TEXT"},
+}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    for table, columns in MIGRATIONS.items():
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        for column, decl in columns.items():
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    conn.commit()
+
+
 def connect(path: Path | str) -> sqlite3.Connection:
     if str(path) != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -98,4 +116,5 @@ def connect(path: Path | str) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn

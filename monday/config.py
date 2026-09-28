@@ -17,6 +17,8 @@ class Config:
     resume_template: Path = PROJECT_ROOT / "data" / "resume" / "base.tex"
     output_dir: Path = PROJECT_ROOT / "data" / "output"
     pdflatex: str | None = None  # None -> find it automatically
+    linkedin_note_chars: int = 200   # free LinkedIn accounts: 200, Premium: 300
+    follow_up_days: int = 5          # after you mark a message sent
 
     def models_for(self, agent: str) -> list[str]:
         models = self.agents.get(agent)
@@ -44,4 +46,6 @@ def load_config(path: Path | str | None = None) -> Config:
         resume_template=_resolve(paths.get("resume_template"), Config.resume_template),
         output_dir=_resolve(paths.get("output"), Config.output_dir),
         pdflatex=raw.get("pdflatex"),
+        linkedin_note_chars=int((raw.get("outreach") or {}).get("linkedin_note_chars", Config.linkedin_note_chars)),
+        follow_up_days=int((raw.get("outreach") or {}).get("follow_up_days", Config.follow_up_days)),
     )

@@ -4,9 +4,11 @@ Each function runs an agent, stores its output as a pending draft, and returns i
 Nothing here sends anything anywhere; approval is a separate, human step.
 """
 
+import json
 from dataclasses import asdict
 
 from monday.agents import job_matcher, resume_tailor
+from monday.agents import outreach as outreach_agent
 from monday.agents.job_matcher import MatchReport
 from monday.agents.resume_tailor import Bullet, Section, TailoredBullet, TailorResult, check_bullet
 from monday.config import Config
@@ -63,6 +65,55 @@ def tailor(tracker: Tracker, config: Config, app_id: int) -> tuple[int, dict, st
     content = _resume_content(result, report, bank, built)
     draft_id = tracker.add_draft(app_id, resume_tailor.AGENT, "resume", content, result.model)
     return draft_id, content, result.model
+
+
+def outreach(tracker: Tracker, config: Config, app_id: int, contact_id: int, kind: str) -> tuple[int, dict, str]:
+    """Draft a message to one contact. Returns (draft id, content, model). Never sends."""
+    app = tracker.get_application(app_id)
+    contact = dict(tracker.get_contact(contact_id))
+    bank = load_bank(config.experience_bank)
+    report = latest_report(tracker, app_id, include_rejected=True)
+
+    previous = None
+    if kind == "follow_up":
+        earlier = [d for d in tracker.outreach_drafts(app_id)
+                   if d["contact_id"] == contact_id and d["status"] == "approved" and d["kind"] != "follow_up"]
+        if earlier:
+            c = json.loads(earlier[-1]["edited_content"] or earlier[-1]["content"])
+            previous = f"Subject: {c.get('subject', '')}\n{c['body']}"
+
+    out, check, model = outreach_agent.run(
+        LLM(config), kind, bank=bank, report=report, company=app["company"], role=app["title"],
+        jd_text=app["description"], contact=contact, previous=previous,
+        linkedin_note_chars=config.linkedin_note_chars,
+    )
+    content = {
+        "kind": kind, "subject": out.subject, "body": out.body, "fact_ids": out.fact_ids,
+        "contact_details_used": out.contact_details_used,
+        "problems": check.problems, "warnings": check.warnings,
+        "max_chars": outreach_agent.kinds(config.linkedin_note_chars)[kind].max_chars,
+        "follow_up_without_earlier_message": kind == "follow_up" and previous is None,
+    }
+    draft_id = tracker.add_draft(app_id, outreach_agent.AGENT, kind, content, model, contact_id=contact_id)
+    return draft_id, content, model
+
+
+def outreach_edit_check(tracker: Tracker, config: Config, draft_id: int, subject: str, body: str) -> list[str]:
+    """Re-run the outreach checks on a human edit. Returns problems + warnings as plain strings."""
+    draft = tracker.get_draft(draft_id)
+    content = json.loads(draft["content"])
+    app = tracker.get_application(draft["application_id"])
+    contact = tracker.get_contact(draft["contact_id"])
+    out = outreach_agent.OutreachOutput(subject=subject, body=body, fact_ids=content["fact_ids"],
+                                        contact_details_used=content["contact_details_used"])
+    check = outreach_agent.check_message(
+        out, outreach_agent.kinds(config.linkedin_note_chars)[content["kind"]],
+        bank=load_bank(config.experience_bank),
+        report=latest_report(tracker, draft["application_id"], include_rejected=True),
+        contact_name=contact["name"], contact_notes=contact["notes"] or "",
+        context=f"{app['description']} {app['company']} {app['title']}",
+    )
+    return check.problems + check.warnings
 
 
 def _section(key: str, bank: ExperienceBank) -> Section:

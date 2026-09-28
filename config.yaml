@@ -28,3 +28,7 @@ paths:
 
 # Full path to pdflatex.exe, or leave empty to find it on PATH / in the default MiKTeX folders.
 pdflatex:
+
+outreach:
+  linkedin_note_chars: 200   # free LinkedIn accounts allow 200 characters, Premium 300
+  follow_up_days: 5          # follow-up reminder after you mark a message as sent

@@ -146,6 +146,30 @@ def cmd_tailor(args, tracker, config):
     print(f"\nReview and approve it in the app:  streamlit run app.py")
 
 
+def cmd_add_contact(args, tracker):
+    app = tracker.get_application(args.app_id)
+    contact_id = tracker.add_contact(app["company"], args.name, role=args.role, email=args.email,
+                                     linkedin_url=args.linkedin, notes=args.notes)
+    print(f"Added contact #{contact_id}: {args.name} @ {app['company']}")
+
+
+def cmd_outreach(args, tracker, config):
+    app = tracker.get_application(args.id)
+    contact = tracker.get_contact(args.contact)
+    print(f"Drafting {args.kind} to {contact['name']} for #{app['id']} {app['title']} @ {app['company']} ...")
+    draft_id, c, model = pipeline.outreach(tracker, config, app["id"], contact["id"], args.kind)
+    print(f"\nDraft #{draft_id} by {model} ({len(c['body'])}/{c['max_chars']} characters)\n")
+    if c["subject"]:
+        print(f"Subject: {c['subject']}\n")
+    print(c["body"])
+    print(f"\ncites: {', '.join(c['fact_ids'])}")
+    for p in c["problems"]:
+        print(f"x FAILED CHECK: {p}")
+    for w in c["warnings"]:
+        print(f"! {w}")
+    print("\nMONDAY never sends messages. Approve it in the app, then send it yourself.")
+
+
 def cmd_funnel(args, tracker):
     print("Reached stage:")
     for stage, n in tracker.funnel().items():
@@ -188,6 +212,20 @@ def build_parser() -> argparse.ArgumentParser:
     t = sub.add_parser("tailor", help="draft a tailored resume (.tex + .pdf) for an application")
     t.add_argument("id", type=int)
 
+    ac = sub.add_parser("add-contact", help="add a person at an application's company")
+    ac.add_argument("app_id", type=int)
+    ac.add_argument("--name", required=True)
+    ac.add_argument("--role")
+    ac.add_argument("--email")
+    ac.add_argument("--linkedin", help="profile URL")
+    ac.add_argument("--notes", help="what you know about them - the only source of personal details")
+
+    o = sub.add_parser("outreach", help="draft a message to a contact (never sent by MONDAY)")
+    o.add_argument("id", type=int, help="application id")
+    o.add_argument("--contact", type=int, required=True)
+    o.add_argument("--kind", default="cold_email",
+                   choices=["cold_email", "linkedin_note", "linkedin_message", "follow_up"])
+
     sub.add_parser("funnel", help="how many applications reached each stage")
     return p
 
@@ -211,10 +249,12 @@ def main(argv: list[str] | None = None) -> int:
             cmd_match(args, Tracker(conn), config)
         elif args.command == "tailor":
             cmd_tailor(args, Tracker(conn), config)
+        elif args.command == "outreach":
+            cmd_outreach(args, Tracker(conn), config)
         else:
             handler = {
                 "add-job": cmd_add_job, "list": cmd_list, "show": cmd_show,
-                "status": cmd_status, "funnel": cmd_funnel,
+                "status": cmd_status, "funnel": cmd_funnel, "add-contact": cmd_add_contact,
             }[args.command]
             handler(args, Tracker(conn))
     except (KeyError, ValueError, FileNotFoundError, LLMError) as exc:
