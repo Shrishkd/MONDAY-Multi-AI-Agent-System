@@ -20,11 +20,13 @@ agents:
   outreach:       [gpt-oss:120b-cloud, gpt-oss:20b-cloud]
   interview_prep: [gpt-oss:120b-cloud, gpt-oss:20b-cloud]
   mock_interview: [gpt-oss:120b-cloud, gpt-oss:20b-cloud]   # feedback on your practice answers
+  cover_letter:   [gpt-oss:120b-cloud, gpt-oss:20b-cloud]   # the one personal line in your template
 
 paths:
   experience_bank: data/experience_bank.yaml
   database: data/monday.db
   resume_template: data/resume/base.tex   # your LaTeX resume; tailored copies keep its layout
+  cover_letter_template: data/cover_letter_template.txt   # {company}, {role}, [personal line]
   output: data/output                     # tailored .tex / .pdf per application
 
 # Full path to pdflatex.exe, or leave empty to find it on PATH / in the default MiKTeX folders.

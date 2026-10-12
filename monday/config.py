@@ -15,6 +15,7 @@ class Config:
     experience_bank: Path = PROJECT_ROOT / "data" / "experience_bank.yaml"
     database: Path = PROJECT_ROOT / "data" / "monday.db"
     resume_template: Path = PROJECT_ROOT / "data" / "resume" / "base.tex"
+    cover_letter_template: Path = PROJECT_ROOT / "data" / "cover_letter_template.txt"
     output_dir: Path = PROJECT_ROOT / "data" / "output"
     pdflatex: str | None = None  # None -> find it automatically
     linkedin_note_chars: int = 200   # free LinkedIn accounts: 200, Premium: 300
@@ -60,6 +61,7 @@ def load_config(path: Path | str | None = None) -> Config:
         experience_bank=_resolve(paths.get("experience_bank"), Config.experience_bank),
         database=_resolve(paths.get("database"), Config.database),
         resume_template=_resolve(paths.get("resume_template"), Config.resume_template),
+        cover_letter_template=_resolve(paths.get("cover_letter_template"), Config.cover_letter_template),
         output_dir=_resolve(paths.get("output"), Config.output_dir),
         pdflatex=raw.get("pdflatex"),
         linkedin_note_chars=int((raw.get("outreach") or {}).get("linkedin_note_chars", Config.linkedin_note_chars)),

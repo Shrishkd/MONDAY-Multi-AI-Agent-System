@@ -13,6 +13,7 @@ It takes a job description (JD) and produces:
 - a **tailored one-page resume** in my own LaTeX template,
 - **cold emails and LinkedIn messages** to real people at the company,
 - an **interview prep sheet** with sourced company research,
+- a **cover letter**: my own template plus one researched line about why this company,
 - **mock interviews** with feedback on my answers,
 
 and it **tracks every application** like a small CRM.
@@ -260,7 +261,28 @@ schedules a follow-up 5 days later. A follow-up draft is written with my earlier
    decided) becomes a **fill-in question for me**. I rewrite the outline in my own words and click
    **"Save as story"** to add it to the Experience Bank; saving an unedited outline is refused.
 
-### 5. Mock Interview: *practice with a coach that knows my record*
+### 5. Cover Letter: *my words, plus one line about why this company*
+
+| | |
+|---|---|
+| **Models** | Ollama web search/fetch + gpt-oss:120b (fallback: 20b) |
+| **Input** | My template (`data/cover_letter_template.txt`), company research, JD |
+| **Output** | The letter: my template unchanged, with one personal line about the company |
+
+The template is mine and the model never rewrites it. Code fills `{company}` and `{role}`; the model
+writes only the line that replaces `[personal line]`, given the paragraphs before and after it so it
+reads naturally. The line comes from the same per-company research cache as Interview Prep.
+
+| Check | Result if it fails |
+|---|---|
+| Cites a retrieved source; its numbers appear in those sources (or the JD) | Hard fail |
+| Over 320 characters, placeholders | Hard fail |
+| No web research available, clichés ("passionate about", "cutting-edge") | Warning |
+
+Hard fails get one retry. In review I can edit the whole letter; once approved, it shows on the
+application page with a copy button and a `.txt` download.
+
+### 6. Mock Interview: *practice with a coach that knows my record*
 
 | | |
 |---|---|
@@ -280,7 +302,7 @@ schedules a follow-up 5 days later. A follow-up draft is written with my earlier
 - My prep sheet's talking points are revealed only **after** I answer.
 - Sessions are saved; the dashboard shows averages per area and the score trend across sessions.
 
-### 6. Tracker: *the CRM, written as code*
+### 7. Tracker: *the CRM, written as code*
 
 Not a model. It stores companies, jobs, applications, contacts, drafts and approvals, and every
 change goes to an append-only **timeline**. The dashboard reads from it:
@@ -506,8 +528,9 @@ streamlit run app.py
 3. **Tailor resume** → review the PDF and bullets, edit, rebuild, **Approve** → apply with it.
 4. **Contacts & outreach:** add a person with notes → draft an email or LinkedIn note → approve →
    send it yourself → **I sent it**.
-5. **Prepare for interview** → approve the prep sheet → turn STAR outlines into saved stories.
-6. **Mock interview** → practice until the dashboard trend goes up.
+5. **Write cover letter** → check the personal line and its source → approve → copy it.
+6. **Prepare for interview** → approve the prep sheet → turn STAR outlines into saved stories.
+7. **Mock interview** → practice until the dashboard trend goes up.
 
 ### CLI reference
 
@@ -520,6 +543,7 @@ streamlit run app.py
 | `monday tailor <id>` | Tailored `.tex` + PDF, saved as a draft |
 | `monday add-contact <id> --name N [--role --email --linkedin --notes]` | Add a person at the company |
 | `monday outreach <id> --contact <cid> [--kind cold_email\|linkedin_note\|linkedin_message\|follow_up]` | Draft a message (never sent) |
+| `monday cover-letter <id> [--refresh]` | Template + researched personal line, also written to `cover_letter.txt` |
 | `monday prep <id> [--refresh]` | Research + prep sheet, also written to `interview_prep.md` |
 | `monday list [--status S]` · `monday show <id>` | Applications · one application's timeline |
 | `monday status <id> <status> [--note]` | Move an application to a stage |
@@ -535,6 +559,7 @@ streamlit run app.py
 |---|---|
 | `agents.<agent>` | Ordered model list; the first that answers wins |
 | `paths.experience_bank` / `database` / `resume_template` / `output` | Where data lives (default `data/…`) |
+| `paths.cover_letter_template` | My cover letter: `{company}`, `{role}` and one `[personal line]` marker |
 | `pdflatex` | Full path to `pdflatex`, or empty to auto-detect (PATH, then the default MiKTeX folders) |
 | `outreach.linkedin_note_chars` | Connection-note limit: 200 on free LinkedIn accounts, 300 on Premium |
 | `outreach.follow_up_days` | Days after "I sent it" before the follow-up reminder |

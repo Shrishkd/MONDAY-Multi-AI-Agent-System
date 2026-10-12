@@ -170,6 +170,25 @@ def cmd_prep(args, tracker, config):
     print(f"\nPrep sheet: {out}\nReview and approve it in the app.")
 
 
+def cmd_cover_letter(args, tracker, config):
+    app = tracker.get_application(args.id)
+    print(f"Writing the cover letter for #{app['id']} {app['title']} @ {app['company']} ...")
+    draft_id, c, model = pipeline.cover_letter(tracker, config, app["id"], refresh_research=args.refresh)
+    out = config.output_dir / f"app-{app['id']}" / "cover_letter.txt"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(c["letter"], encoding="utf-8")
+    src = {s["id"]: s for s in c["sources"]}
+    print(f"\nDraft #{draft_id} by {model}, from {len(c['sources'])} sources\n\n{c['line']}\n")
+    for i in c["source_ids"]:
+        if i in src:
+            print(f"  [{i}] {src[i]['url']}")
+    for p in c["problems"]:
+        print(f"x FAILED CHECK: {p}")
+    for w in c["warnings"]:
+        print(f"! {w}")
+    print(f"\nFull letter: {out}\nReview and approve it in the app.")
+
+
 def cmd_outreach(args, tracker, config):
     app = tracker.get_application(args.id)
     contact = tracker.get_contact(args.contact)
@@ -247,6 +266,10 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("id", type=int)
     pr.add_argument("--refresh", action="store_true", help="redo the web research instead of reusing it")
 
+    cl = sub.add_parser("cover-letter", help="your cover letter template + one researched line about the company")
+    cl.add_argument("id", type=int)
+    cl.add_argument("--refresh", action="store_true", help="redo the web research instead of reusing it")
+
     sub.add_parser("funnel", help="how many applications reached each stage")
     return p
 
@@ -274,6 +297,8 @@ def main(argv: list[str] | None = None) -> int:
             cmd_outreach(args, Tracker(conn), config)
         elif args.command == "prep":
             cmd_prep(args, Tracker(conn), config)
+        elif args.command == "cover-letter":
+            cmd_cover_letter(args, Tracker(conn), config)
         else:
             handler = {
                 "add-job": cmd_add_job, "list": cmd_list, "show": cmd_show,

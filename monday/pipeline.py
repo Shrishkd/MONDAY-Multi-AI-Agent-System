@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from monday import resume_import
+from monday.agents import cover_letter as cover_agent
 from monday.agents import interview_prep as prep_agent
 from monday.agents import job_matcher, resume_tailor
 from monday.agents import mock_interview as mock_agent
@@ -124,26 +125,28 @@ def outreach_edit_check(tracker: Tracker, config: Config, draft_id: int, subject
     return check.problems + check.warnings
 
 
+def _research(tracker: Tracker, config: Config, app, refresh: bool) -> tuple[list[dict], str | None, list[str]]:
+    """Company research, cached per company. Returns (sources, researched at, notes)."""
+    cached = None if refresh else tracker.latest_research(app["company_id"])
+    if cached:
+        return cached[0], cached[1], []
+    try:
+        found, notes = Researcher(config.ollama_api_key).gather(app["company"], app["title"],
+                                                                app["company_website"])
+    except ResearchError as exc:
+        return [], None, [str(exc)]
+    sources = [s.as_dict() for s in found]
+    tracker.save_research(app["company_id"], sources)
+    return sources, "just now", notes
+
+
 def interview_prep(tracker: Tracker, config: Config, app_id: int,
                    refresh_research: bool = False) -> tuple[int, dict, str]:
     """Research the company (cached per company), then write the prep sheet. Returns (draft id, content, model)."""
     app = tracker.get_application(app_id)
     bank = load_bank(config.experience_bank)
     report = latest_report(tracker, app_id, include_rejected=True)
-
-    notes: list[str] = []
-    cached = None if refresh_research else tracker.latest_research(app["company_id"])
-    if cached:
-        sources, researched_at = cached
-    else:
-        try:
-            found, notes = Researcher(config.ollama_api_key).gather(app["company"], app["title"],
-                                                                    app["company_website"])
-            sources = [s.as_dict() for s in found]
-            tracker.save_research(app["company_id"], sources)
-            researched_at = "just now"
-        except ResearchError as exc:
-            sources, researched_at, notes = [], None, [str(exc)]
+    sources, researched_at, notes = _research(tracker, config, app, refresh_research)
 
     llm = LLM(config)
     brief, dropped_brief, _ = prep_agent.write_brief(llm, app["company"], sources)
@@ -162,6 +165,30 @@ def interview_prep(tracker: Tracker, config: Config, app_id: int,
         "dropped": dropped_brief + dropped_prep,
     }
     draft_id = tracker.add_draft(app_id, prep_agent.AGENT, "interview_prep", content, model)
+    return draft_id, content, model
+
+
+def cover_letter(tracker: Tracker, config: Config, app_id: int,
+                 refresh_research: bool = False) -> tuple[int, dict, str]:
+    """Your template + one researched personal line. Returns (draft id, content, model)."""
+    path = config.cover_letter_template
+    if not path.exists():
+        raise FileNotFoundError(f"No cover letter template at {path}. Write yours there, with "
+                                f"{{company}}, {{role}} and {cover_agent.SLOT} where they belong.")
+    template = path.read_text(encoding="utf-8")
+    app = tracker.get_application(app_id)
+    sources, researched_at, notes = _research(tracker, config, app, refresh_research)
+
+    out, check, model = cover_agent.run(LLM(config), template, company=app["company"], role=app["title"],
+                                        jd_text=app["description"], sources=sources)
+    content = {
+        "line": out.line, "source_ids": out.source_ids,
+        "letter": cover_agent.fill(template, company=app["company"], role=app["title"], line=out.line),
+        "sources": [{"id": i, "title": s["title"], "url": s["url"]} for i, s in enumerate(sources, 1)],
+        "researched_at": researched_at, "research_notes": notes,
+        "problems": check.problems, "warnings": check.warnings,
+    }
+    draft_id = tracker.add_draft(app_id, cover_agent.AGENT, "cover_letter", content, model)
     return draft_id, content, model
 
 

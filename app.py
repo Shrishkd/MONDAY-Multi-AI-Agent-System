@@ -221,6 +221,36 @@ def review_outreach(draft, content: dict):
     st.caption("Approving doesn't send anything. You'll send it yourself from the application page.")
 
 
+def review_cover_letter(draft, content: dict):
+    did = draft["id"]
+    src = {s["id"]: s for s in content["sources"]}
+    for p in content["problems"]:
+        st.error(f"Failed check (after one retry): {p}")
+    for w in content["warnings"]:
+        st.warning(w)
+    refs = " ".join(f"[[{i}]]({src[i]['url']})" for i in content["source_ids"] if i in src)
+    st.markdown(f"**The personal line:** {md(content['line'])} {refs}")
+    st.caption(f"{len(content['sources'])} sources · researched {content['researched_at'] or 'never'}"
+               " · the rest of the letter is your template, unchanged")
+    if content["research_notes"]:
+        with st.expander("Research notes"):
+            for n in content["research_notes"]:
+                st.write(f"- {md(n)}")
+
+    letter = st.text_area("Cover letter", content["letter"], key=f"cl{did}", height=420)
+    edited = letter != content["letter"]
+    if "[personal line]" in letter or "{company}" in letter or "{role}" in letter:
+        st.warning("The letter still has a template marker in it.")
+
+    b1, b2 = st.columns(2)
+    if b1.button("Approve with edits" if edited else "Approve", key=f"ok{did}", type="primary"):
+        tracker.review_draft(did, approve=True, edited_content={**content, "letter": letter} if edited else None)
+        st.rerun()
+    if b2.button("Reject", key=f"no{did}"):
+        tracker.review_draft(did, approve=False)
+        st.rerun()
+
+
 PREP_GROUPS = {"technical": "Technical", "resume": "Your resume", "behavioral": "Behavioral",
                "gap": "Gaps", "company": "Why this company"}
 BRIEF_TITLES = {"overview": "Overview", "products": "Products", "tech_and_engineering": "Tech & engineering",
@@ -325,6 +355,8 @@ def page_review():
                 review_outreach(draft, content)
             elif draft["kind"] == "interview_prep":
                 review_prep(draft, content)
+            elif draft["kind"] == "cover_letter":
+                review_cover_letter(draft, content)
             else:
                 st.json(content)
 
@@ -460,7 +492,7 @@ def application_detail(app_id: int):
     if app["url"]:
         st.markdown(f"[Job posting]({app['url']})")
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     if c1.button("Run Job Matcher", key=f"m{app_id}"):
         if run_agent("Job Matcher is reading the JD", lambda: pipeline.match(tracker, config, app_id)):
             st.rerun()
@@ -473,6 +505,10 @@ def application_detail(app_id: int):
         if run_agent("Researching the company and writing your prep sheet (1-2 minutes)",
                      lambda: pipeline.interview_prep(tracker, config, app_id, refresh_research=refresh)):
             st.success("Prep sheet ready - see the Review queue.")
+    if c4.button("Write cover letter", key=f"cl{app_id}"):
+        if run_agent("Researching the company and writing your personal line",
+                     lambda: pipeline.cover_letter(tracker, config, app_id, refresh_research=refresh)):
+            st.success("Cover letter ready - see the Review queue.")
 
     with st.form(f"site{app_id}"):
         w1, w2 = st.columns([3, 1])
@@ -503,6 +539,14 @@ def application_detail(app_id: int):
     if approved_prep and approved_prep["status"] == "approved":
         with st.expander("Interview prep sheet", expanded=False):
             render_prep(json.loads(approved_prep["content"]), app, f"a{approved_prep['id']}")
+
+    approved_letter = tracker.latest_draft(app_id, "cover_letter")
+    if approved_letter and approved_letter["status"] == "approved":
+        letter = json.loads(approved_letter["edited_content"] or approved_letter["content"])["letter"]
+        with st.expander("Cover letter", expanded=False):
+            st.code(letter, language=None, wrap_lines=True)   # has a copy button
+            st.download_button("Download .txt", letter, key=f"cltxt{app_id}",
+                               file_name=f"cover_letter_{app['company']}_{app['title']}.txt".replace(" ", "_"))
 
     with st.expander("Job description"):
         st.text(app["description"])
